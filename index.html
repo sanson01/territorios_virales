@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<!-- saved from url=(0043)https://threejs.org/examples/webxr_vr_cubes -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+		<title>Respiración - Santiago Colombo Migliorero</title>
+		
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+		<link type="text/css" rel="stylesheet" href="./assets/main.css">
+	</head>
+	<body data-gr-c-s-loaded="true">
+
+		<div id="info">
+			<!--<a href="https://ohzi.io" target="_blank" rel="noopener">.</a>-->
+		</div>
+
+		<script type="module">
+
+			import * as THREE from './assets/three.module.js';
+
+			import { BoxLineGeometry } from './assets/BoxLineGeometry.js';
+			import { VRButton } from './assets/VRButton.js';
+			import { XRControllerModelFactory } from './assets/XRControllerModelFactory.js';
+
+			import Stats from './assets/stats.module.js';
+			import { OrbitControls } from './assets/OrbitControls.js';
+
+			import { GLTFLoader } from './assets/GLTFLoader.js';
+			import {DRACOLoader} from './assets/DRACOLoader.js';
+
+			var container, stats, clock, gui, mixer, actions, activeAction, previousAction;
+			var camera, scene, renderer, model, face, controls;
+
+			var api = { state: 'Walking' }
+			var clock = new THREE.Clock();
+
+			var container;
+			var camera, scene, raycaster, renderer;
+
+			var room;
+
+			var controller, controllerGrip, tempMatrix = new THREE.Matrix4();
+			var INTERSECTED;
+
+			init();
+			animate();
+
+			function init() {
+
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0x505050 );
+				//niebla
+				//scene.fog = new THREE.Fog( 0xe0e0e0, 1, 120 );
+
+				camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.1, 250 );
+				camera.position.set( -0.5, 0.7, 3.7 );
+				scene.add( camera );
+
+				raycaster = new THREE.Raycaster();
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.outputEncoding = THREE.sRGBEncoding;
+				renderer.xr.enabled = false;
+				container.appendChild( renderer.domElement );
+
+				controls = new OrbitControls( camera, renderer.domElement );
+				//controls.maxPolarAngle = Math.PI * 0.5;
+				controls.minDistance = 0;
+				controls.maxDistance = 20;
+				//controls.enablePan = false;
+				controls.enableDamping = true;
+
+				//room = new THREE.LineSegments(
+				//	new BoxLineGeometry( 6, 6, 6, 10, 10, 10 ).translate( 0, 3, 0 ),
+				//	new THREE.LineBasicMaterial( { color: 0x808080 } )
+				//);
+				room = new THREE.Object3D();
+				scene.add( room );
+
+
+				function onSelectStart() {
+
+					this.userData.isSelecting = true;
+
+				}
+
+				function onSelectEnd() {
+
+					this.userData.isSelecting = false;
+
+				}
+
+				controller = renderer.xr.getController( 0 );
+				controller.addEventListener( 'selectstart', onSelectStart );
+				controller.addEventListener( 'selectend', onSelectEnd );
+				controller.addEventListener( 'connected', function ( event ) {
+
+					this.add( buildController( event.data ) );
+
+				} );
+				controller.addEventListener( 'disconnected', function () {
+
+					this.remove( this.children[ 0 ] );
+
+				} );
+				scene.add( controller );
+
+				var controllerModelFactory = new XRControllerModelFactory();
+
+				controllerGrip = renderer.xr.getControllerGrip( 0 );
+				controllerGrip.add( controllerModelFactory.createControllerModel( controllerGrip ) );
+				scene.add( controllerGrip );
+
+				window.addEventListener( 'resize', onWindowResize, false );
+
+				//
+
+				document.body.appendChild( VRButton.createButton( renderer ) );
+
+    		var draco_loader = new DRACOLoader();
+    		draco_loader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.3/');
+    		draco_loader.setDecoderConfig({ type: 'js' });
+
+				// model
+
+				var loader = new GLTFLoader();
+				loader.setDRACOLoader(draco_loader);
+
+				loader.load( './modelo.glb', function ( gltf ) {
+
+					model = gltf.scene;
+
+					gltf.scene.traverse((obj)=> {
+						if (obj.material) {
+							let map = obj.material.map;
+							obj.material = new THREE.MeshBasicMaterial({
+								map : map
+							});
+						}
+					})
+					//model.position.z = -2;
+					model.scale.set(.3,.3,.3)
+					scene.add( model );
+
+					createGUI( model, gltf.animations );
+
+					document.querySelector('.progress').hidden = true
+
+				}, 
+				function ( xhr ) {
+
+					document.querySelector('progress').value = Math.floor( xhr.loaded / 19997448 * 100) + ""
+ 				  console.log( ( (xhr.loaded / 19997448) * 100 ) + '% loaded' );
+ 				 },
+  			function ( e ) {
+
+					console.error( e );
+
+				} );
+
+				// stats
+				stats = new Stats();
+				//container.appendChild( stats.dom );
+			}
+
+			function buildController( data ) {
+
+				switch ( data.targetRayMode ) {
+
+					case 'tracked-pointer':
+
+						var geometry = new THREE.BufferGeometry();
+						geometry.setAttribute( 'position', new THREE.Float32BufferAttribute( [ 0, 0, 0, 0, 0, - 1 ], 3 ) );
+						geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( [ 0.5, 0.5, 0.5, 0, 0, 0 ], 3 ) );
+
+						var material = new THREE.LineBasicMaterial( { vertexColors: true, blending: THREE.AdditiveBlending } );
+
+						return new THREE.Line( geometry, material );
+
+					case 'gaze':
+
+						var geometry = new THREE.RingBufferGeometry( 0.02, 0.04, 32 ).translate( 0, 0, - 1 );
+						var material = new THREE.MeshBasicMaterial( { opacity: 0.5, transparent: true } );
+						return new THREE.Mesh( geometry, material );
+
+				}
+
+			}
+
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function createGUI( model, animations ) {
+
+				console.log(animations)
+
+        mixer = new THREE.AnimationMixer( model );
+
+
+        for(let i=0; i< animations.length; i++)
+        {
+          mixer.clipAction( animations[ i ] ).play();
+
+        }
+      }
+
+
+			function animate() {
+
+				
+
+				requestAnimationFrame( animate );
+
+				//renderer.render( scene, camera );
+				renderer.setAnimationLoop( render );
+
+				stats.update();
+
+			}
+
+			function render() {
+
+				var dt = clock.getDelta();
+
+				if ( mixer ) mixer.update( dt );
+
+				var delta = clock.getDelta() * 60;
+
+
+				renderer.render( scene, camera );
+				controls.update();
+			}
+
+		</script>
+
+		<div class="progress">
+		  <div class="progress-bar" role="progressbar" aria-valuenow="60" aria-valuemin="0" aria-valuemax="100" style="text-align:center; vertical-align: center; position: absolute; margin: auto; left: 0; right: 0;">
+		    <progress id="file" max="100" value=""> </progress>
+		  </div>
+		</div>
+
+		
+	
+
+</body></html>
